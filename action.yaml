@@ -1,0 +1,71 @@
+name: Release
+
+description: Deploy your service to amazon EKS
+
+inputs:
+  aws_region:
+    description: AWS Region to deploy to
+    required: true
+    default: "ap-south-1"
+  role_to_assume:
+    description: AWS IAM Role to assume
+    required: true
+  aws_cluster_name:
+    description: AWS cluster name 
+    required: true
+  gh_pat:
+    description: personal access token to access other repos
+    required: true
+  environment:
+    description: Deployment environment
+    required: true
+    default: "Dev"
+
+runs:
+  using: composite
+  steps:
+    - name: Checkout Variables
+      uses: actions/checkout@v3
+      with:
+        repository: prashanth-volvocars/variables
+        token: ${{ inputs.gh_pat }}
+        path: variables
+
+    - name: Populate Env Variables
+      shell: bash
+      run: |
+        cat variables/${{ github.event.repository.name }}/.env >> $GITHUB_ENV
+        cat variables/${{ github.event.repository.name }}/${{ inputs.environment }}/.env >> $GITHUB_ENV
+
+    - name: Download Deployment Artifacts
+      uses: actions/download-artifact@v3
+      with:
+        name: deployment-artifacts
+
+    - name: Substitute Values In Deployment Files
+      uses: cschleiden/replace-tokens@v1
+      with:
+        tokenPrefix: '${'
+        tokenSuffix: '}'
+        files: '["cloud/deploy.yaml", "cloud/ingress.yaml"]'
+
+    - name: Configure Kubectl
+      uses: azure/setup-kubectl@v2.0
+      with:
+        version: 'v1.23.6'
+      id: install
+
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-region: ${{ inputs.aws_region }}
+        role-to-assume: ${{ inputs.role_to_assume }}
+
+    - name: Update KubeConfig
+      shell: bash
+      run: |
+        aws eks update-kubeconfig --name ${{ inputs.aws_cluster_name }} --region=${{ inputs.aws_region }}
+        
+    - name: Deploy To Cluster
+      shell: bash
+      run: kubectl apply -n default -f cloud/
